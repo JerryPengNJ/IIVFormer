@@ -1,0 +1,7 @@
+/data
+/checkpoint
+/figure
+/demo
+/log
+*.pyc
+*.out
