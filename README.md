@@ -1,4 +1,4 @@
-# IIVFormer: Intra and Inter View Transformer for 3D Human Pose Estimation
+# Enhancing 3D Human Pose Estimation via Intra-and Inter-View Transformer Networks
 
 ## Environment
 The project is developed under the following environment:
@@ -44,3 +44,12 @@ python evaluate.py --model_path 'your model path'
 
 ## Visualization
 Please refer to the [MHFormer](https://github.com/Vegetebird/MHFormer).
+
+
+## Citation
+
+If you use this code in your research, please cite:
+
+@article{ author = {Guozheng Peng}, title = {"Enhancing 3D Human Pose Estimation via Intra-and Inter-View Transformer Networks"}, 
+journal = {The Visual Computer}, 
+year = {2025}, note = {Submitted} }
