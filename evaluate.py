@@ -1,5 +1,6 @@
 import numpy as np
 import argparse
+import random
 from common.h36m_dataset import Human36mDataset
 from common.data_utils import split_data
 from common.data_utils import normalation
@@ -11,6 +12,14 @@ from common.loss import mpjpe
 from common.loss import p_mpjpe
 import torch
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -19,14 +28,13 @@ def parse_args():
     parser.add_argument('--data_2d', type=str, default='data/data_2d_h36m_cpn_ft_h36m_dbb.npz')
     parser.add_argument('--subjects', type=str, default="['S9', 'S11']")
     parser.add_argument('--model_path', type=str, default='cpn.pth')
-    parser.add_argument('--protocol', type=str, default='p2')
-    # parser.add_argument('--batch_size', type=int, default=64)
-    # parser.add_argument('--epochs', type=int, default=50)
-    # parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--protocol', type=str, default='p1')
+    parser.add_argument('--seed', type=int, default=42)
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    set_seed(args.seed)
     dataset_path = args.data_3d
     dataset = Human36mDataset(dataset_path)
     keypoints_path = args.data_2d
@@ -66,7 +74,7 @@ def main():
     print(subjects_eval)
     # model = Net(keypoints_num=17, n=3).cuda()
     num_view = 4
-    model = IIVFormer(num_frame=num_view, num_joints=17, in_chans=2, embed_dim_ratio=32, depth=4,
+    model = IIVFormer(num_view=num_view, num_joints=17, in_chans=2, embed_dim_ratio=32, depth=4,
         num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,drop_path_rate=0.1).cuda()
     ckpt = torch.load(args.model_path)
     model.load_state_dict(ckpt)

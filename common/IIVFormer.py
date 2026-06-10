@@ -83,12 +83,12 @@ class Block(nn.Module):
         return x
 
 class IIVFormer(nn.Module):
-    def __init__(self, num_frame=9, num_joints=17, in_chans=2, embed_dim_ratio=32, depth=4,
+    def __init__(self, num_view=4, num_joints=17, in_chans=2, embed_dim_ratio=32, depth=4,
                  num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,
-                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.2,  norm_layer=None):
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, norm_layer=None):
         """    ##########hybrid_backbone=None, representation_size=None,
         Args:
-            num_frame (int, tuple): input frame number
+            num_view (int, tuple): number of input views
             num_joints (int, tuple): joints number
             in_chans (int): number of input channels, 2D joints have 2 channels: (x,y)
             embed_dim_ratio (int): embedding dimension ratio
@@ -105,66 +105,66 @@ class IIVFormer(nn.Module):
         super().__init__()
 
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
-        embed_dim = embed_dim_ratio * num_joints   #### temporal embed_dim is num_joints * spatial embedding dim ratio
+        inter_embed_dim = embed_dim_ratio * num_joints   #### inter embedding dim is num_joints * intra embedding dim ratio
         out_dim = num_joints * 3     #### output dimension is num_joints * 3
 
-        ### spatial patch embedding
-        self.Spatial_patch_to_embedding = nn.Linear(in_chans, embed_dim_ratio)
-        self.Spatial_pos_embed = nn.Parameter(torch.zeros(1, num_joints, embed_dim_ratio))
+        ### intra-view patch embedding
+        self.Intra_patch_to_embedding = nn.Linear(in_chans, embed_dim_ratio)
+        self.Intra_pos_embed = nn.Parameter(torch.zeros(1, num_joints, embed_dim_ratio))
 
-        self.Temporal_pos_embed = nn.Parameter(torch.zeros(1, num_frame, embed_dim))
+        self.Inter_pos_embed = nn.Parameter(torch.zeros(1, num_view, inter_embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
 
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
 
-        self.Spatial_blocks = nn.ModuleList([
+        self.Intra_blocks = nn.ModuleList([
             Block(
                 dim=embed_dim_ratio, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer)
             for i in range(depth)])
 
-        self.blocks = nn.ModuleList([
+        self.Inter_blocks = nn.ModuleList([
             Block(
-                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                dim=inter_embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer)
             for i in range(depth)])
 
-        self.Spatial_norm = norm_layer(embed_dim_ratio)
-        self.Temporal_norm = norm_layer(embed_dim)
+        self.Intra_norm = norm_layer(embed_dim_ratio)
+        self.Inter_norm = norm_layer(inter_embed_dim)
 
-        self.weighted_mean = torch.nn.Conv1d(in_channels=num_frame, out_channels=1, kernel_size=1)
+        self.weighted_mean = torch.nn.Conv1d(in_channels=num_view, out_channels=1, kernel_size=1)
 
         self.head = nn.Sequential(
-            nn.LayerNorm(embed_dim),
-            nn.Linear(embed_dim , out_dim),
+            nn.LayerNorm(inter_embed_dim),
+            nn.Linear(inter_embed_dim, out_dim),
         )
 
 
-    def Spatial_forward_features(self, x):
-        b, _, f, p = x.shape  ##### b is batch size, f is number of frames, p is number of joints
+    def Intra_forward_features(self, x):
+        b, _, f, p = x.shape  ##### b is batch size, f is number of views, p is number of joints
         x = rearrange(x, 'b c f p  -> (b f) p  c', )
 
-        x = self.Spatial_patch_to_embedding(x)
-        x += self.Spatial_pos_embed
+        x = self.Intra_patch_to_embedding(x)
+        x += self.Intra_pos_embed
         x = self.pos_drop(x)
 
-        for blk in self.Spatial_blocks:
+        for blk in self.Intra_blocks:
             x = blk(x)
 
-        x = self.Spatial_norm(x)
+        x = self.Intra_norm(x)
         x = rearrange(x, '(b f) w c -> b f (w c)', f=f)
         return x
 
-    def forward_features(self, x):
+    def Inter_forward_features(self, x):
         b  = x.shape[0]
-        x += self.Temporal_pos_embed
+        x += self.Inter_pos_embed
         x = self.pos_drop(x)
-        for blk in self.blocks:
+        for blk in self.Inter_blocks:
             x = blk(x)
 
-        x = self.Temporal_norm(x)
-        ##### x size [b, f, emb_dim], then take weighted mean on frame dimension, we only predict 3D pose of the center frame
+        x = self.Inter_norm(x)
+        ##### x size [b, f, emb_dim], then take weighted mean on view dimension, we only predict 3D pose of the center frame
         x = self.weighted_mean(x)
         x = x.view(b, 1, -1)
         return x
@@ -173,9 +173,9 @@ class IIVFormer(nn.Module):
     def forward(self, x):
         x = x.permute(0, 3, 1, 2)
         b, _, _, p = x.shape
-        ### now x is [batch_size, 2 channels, receptive frames, joint_num], following image data
-        x = self.Spatial_forward_features(x)
-        x = self.forward_features(x)
+        ### now x is [batch_size, 2 channels, input views, joint_num], following image data
+        x = self.Intra_forward_features(x)
+        x = self.Inter_forward_features(x)
         x = self.head(x)
 
         x = x.view(b, 1, p, -1)
